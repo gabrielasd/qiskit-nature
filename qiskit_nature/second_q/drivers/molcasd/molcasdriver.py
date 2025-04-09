@@ -1,0 +1,217 @@
+# This code is part of a Qiskit project.
+#
+# (C) Copyright IBM 2018, 2023.
+#
+# This code is licensed under the Apache License, Version 2.0. You may
+# obtain a copy of this license in the LICENSE.txt file in the root directory
+# of this source tree or at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# Any modifications or derivative works of this code must retain this
+# copyright notice, and modified files need to carry a notice indicating
+# that they have been altered from the originals.
+
+""" OpenMolcas Driver."""
+
+from __future__ import annotations
+
+import io
+import logging
+import os
+import sys
+import subprocess
+import tempfile
+from typing import Any, TYPE_CHECKING
+
+import numpy as np
+
+from qiskit_nature import QiskitNatureError
+from qiskit_nature.constants import PERIODIC_TABLE
+from qiskit_nature.units import DistanceUnit
+from qiskit_nature.exceptions import UnsupportMethodError
+import qiskit_nature.optionals as _optionals
+from qiskit_nature.settings import settings
+from qiskit_nature.second_q.formats.molecule_info import MoleculeInfo
+from qiskit_nature.second_q.formats.qcschema import QCSchema
+from qiskit_nature.second_q.formats.qcschema_translator import qcschema_to_problem
+from qiskit_nature.second_q.problems import ElectronicBasis, ElectronicStructureProblem
+from qiskit_nature.utils import get_einsum
+
+from ..electronic_structure_driver import ElectronicStructureDriver, MethodType, _QCSchemaData
+
+logger = logging.getLogger(__name__)
+
+
+# @_optionals.HAS_MOLCAS.require_in_instance
+class MolcasDriver(ElectronicStructureDriver):
+    """
+    Qiskit Nature driver using the OpenMolcas program.
+    """
+
+    def __init__(
+        self,
+        config: str | list[str] = "&GATEWAY\ncoord\n2\nangstrom\nH  0.0 0.0 0.0\nH  0.0 0.0 0.735\n"
+        "basis=sto-3g\n&SEWARD\n&SCF\n\n",
+    ) -> None:
+        """
+        Args:
+            config: A molecular configuration conforming to Molcas format.
+
+        Raises:
+            QiskitNatureError: Invalid Input
+        """
+        super().__init__()
+        if not isinstance(config, str) and not isinstance(config, list):
+            raise QiskitNatureError(f"Invalid config for Gaussian Driver '{config}'")
+
+        if isinstance(config, list):
+            config = "\n".join(config)
+
+        self._config = config
+        self._qcschemadata = _QCSchemaData()
+
+    # TODO: Search a reference input file for Molcas
+    @staticmethod
+    # @_optionals.HAS_MOLCAS.require_in_call
+    def from_molecule(
+        molecule: MoleculeInfo,
+        *,
+        basis: str = "sto-3g",
+        method: MethodType = MethodType.RHF,
+        driver_kwargs: dict[str, Any] | None = None,
+    ) -> "MolcasDriver":
+        """Creates a driver from a molecule.
+
+        Args:
+            molecule: the molecular information.
+            basis: the basis set.
+            method: the SCF method type.
+            driver_kwargs: keyword arguments to be passed to driver.
+
+        Returns:
+            The constructed driver instance.
+
+        Raises:
+            QiskitNatureError: when an unknown unit is encountered.
+        """
+        # Ignore kwargs parameter for this driver
+        del driver_kwargs
+        MolcasDriver.check_method_supported(method)
+        basis = MolcasDriver.to_driver_basis(basis)
+
+        if molecule.units == DistanceUnit.ANGSTROM:
+            units = "Angstrom"
+        elif molecule.units == DistanceUnit.BOHR:
+            units = "Bohr"
+        else:
+            raise QiskitNatureError(f"Unknown unit '{molecule.units.value}'")
+        
+        name = "".join(molecule.symbols)
+        geom = "\n".join(
+            [
+                name + " " + " ".join(map(str, coord))
+                for (name, coord) in zip(molecule.symbols, molecule.coords)
+            ]
+        )
+        cfg1 = "&GATEWAY\n"
+        cfg2 = f"coord\n{len(molecule.symbols)}\n{units}\n"
+        cfg2 += f"{geom}\nbasis={basis}\nGroup=Nosym\n"
+        cfg3 = f"&SEWARD\n&SCF\n\n"
+
+        return MolcasDriver(cfg1 + cfg2 + cfg3)
+
+    @staticmethod
+    def to_driver_basis(basis: str) -> str:
+        """Converts basis to a driver acceptable basis.
+
+        Args:
+            basis: The basis set to be used.
+
+        Returns:
+            A driver acceptable basis.
+        """
+        if basis == "sto3g":
+            return "sto-3g"
+        return basis
+
+    @staticmethod
+    def check_method_supported(method: MethodType) -> None:
+        """Checks that Gaussian supports this method.
+
+        Args:
+            method: the SCF method type.
+
+        Raises:
+            UnsupportMethodError: If the method is not supported.
+        """
+        if method not in [MethodType.RHF, MethodType.ROHF, MethodType.UHF]:
+            raise UnsupportMethodError(f"Invalid Molcas method {method.value}.")
+
+    def run(self) -> ElectronicStructureProblem:
+        cfg = self._config
+
+        logger.debug(
+            "User supplied configuration raw: '%s'",
+            cfg.replace("\r", "\\r").replace("\n", "\\n"),
+        )
+
+        logger.debug("User supplied configuration\n%s", cfg)
+
+        file_fd, input_file = tempfile.mkstemp(suffix=".inp")
+        os.close(file_fd)
+        with open(input_file, "w", encoding="utf8") as stream:
+            stream.write(cfg)
+
+        file_fd, output_file = tempfile.mkstemp(suffix=".out")
+        os.close(file_fd)       
+
+        
+        MolcasDriver._run_pymolcas(input_file, output_file)
+        if logger.isEnabledFor(logging.DEBUG):
+            with open(output_file, "r", encoding="utf8") as file:
+                logger.debug("OpenMolcas output file:\n%s", file.read())
+
+        # return self.to_problem()
+
+    # @staticmethod
+    # def _augment_config(fname: str, cfg: str) -> str:
+    #     """Adds the extra config we need to the input file"""
+    #     pass
+
+    def to_qcschema(self, *, include_dipole: bool = True) -> QCSchema:
+        pass
+
+    def to_problem(
+        self,
+        *,
+        basis: ElectronicBasis = ElectronicBasis.MO,
+        include_dipole: bool = True,
+    ) -> ElectronicStructureProblem:
+        pass
+
+    @staticmethod
+    def _run_pymolcas(input_file: str, output_file: str) -> str:
+        process = None
+        try:
+            with subprocess.Popen(
+                [_optionals.MOLCAS, input_file, "-o", output_file],
+                stdout=subprocess.PIPE,
+                universal_newlines=True,
+            ) as process:
+                stdout, _ = process.communicate()
+                process.wait()
+        except Exception as ex:
+            if process is not None:
+                process.kill()
+
+            raise QiskitNatureError(f"{_optionals.MOLCAS_DESC} run has failed") from ex
+
+        if process.returncode != 0:
+            errmsg = ""
+            if stdout is not None:
+                lines = stdout.splitlines()
+                for line in lines:
+                    logger.error(line)
+                    errmsg += line + "\n"
+            raise QiskitNatureError(
+                f"{_optionals.MOLCAS_DESC} process return code {process.returncode}: {errmsg}"
+            )

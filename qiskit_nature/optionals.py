@@ -85,3 +85,11 @@ HAS_SPARSE = LazyImportTester(
 HAS_OPT_EINSUM = LazyImportTester(
     "opt_einsum", name="Optimized einsum", install="pip install opt_einsum"
 )
+
+MOLCAS = "pymolcas"
+MOLCAS_DESC = "OpenMolcas"
+HAS_MOLCAS = NatureLazySubprocessTester(
+    (MOLCAS, "--version"),
+    name=MOLCAS_DESC,
+    msg="See https://gitlab.com/Molcas/OpenMolcas#installation",
+)

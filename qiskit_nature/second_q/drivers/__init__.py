@@ -93,6 +93,7 @@ from .electronic_structure_driver import ElectronicStructureDriver, MethodType
 from .gaussiand import GaussianDriver, GaussianLogDriver, GaussianLogResult, GaussianForcesDriver
 from .psi4d import Psi4Driver
 from .pyscfd import PySCFDriver, InitialGuess
+from .molcasd import MolcasDriver
 
 __all__ = [
     "MethodType",
@@ -106,4 +107,5 @@ __all__ = [
     "Psi4Driver",
     "PySCFDriver",
     "InitialGuess",
+    "MolcasDriver",
 ]
