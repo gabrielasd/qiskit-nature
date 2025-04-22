@@ -178,16 +178,20 @@ class MolcasDriver(ElectronicStructureDriver):
     #     """Adds the extra config we need to the input file"""
     #     pass
 
-    def to_qcschema(self, *, include_dipole: bool = True) -> QCSchema:
-        pass
+    def to_qcschema(self, *, include_dipole: bool = False) -> QCSchema:
+        return MolcasDriver._to_qcschema(self._qcschemadata, include_dipole=include_dipole)
 
     def to_problem(
         self,
         *,
         basis: ElectronicBasis = ElectronicBasis.MO,
-        include_dipole: bool = True,
+        include_dipole: bool = False,
     ) -> ElectronicStructureProblem:
-        pass
+        return qcschema_to_problem(
+            self.to_qcschema(include_dipole=include_dipole),
+            basis=basis,
+            include_dipole=include_dipole,
+        )
 
     @staticmethod
     def _run_pymolcas(input_file: str, output_file: str) -> str:
