@@ -33,6 +33,7 @@ from qiskit_nature.settings import settings
 from qiskit_nature.second_q.formats.molecule_info import MoleculeInfo
 from qiskit_nature.second_q.formats.qcschema import QCSchema
 from qiskit_nature.second_q.formats.qcschema_translator import qcschema_to_problem
+from qiskit_nature.second_q.formats.fcidump import FCIDump
 from qiskit_nature.second_q.problems import ElectronicBasis, ElectronicStructureProblem
 from qiskit_nature.utils import get_einsum
 
@@ -215,3 +216,74 @@ class MolcasDriver(ElectronicStructureDriver):
             raise QiskitNatureError(
                 f"{_optionals.MOLCAS_DESC} process return code {process.returncode}: {errmsg}"
             )
+    
+    @staticmethod
+    def _qcschema_from_files(fname: str, *, include_dipole: bool = False) -> QCSchema:
+        from .utils import parse_molden, parse_output
+        data = _QCSchemaData()
+
+        if not os.path.exists(f"{fname}.FciDmp"):
+            raise QiskitNatureError(f"Missing file {fname}.FciDmp")
+        if not os.path.exists(f"{fname}.scf.molden"):
+            raise QiskitNatureError(f"Missing file {fname}.scf.molden")
+        if not os.path.exists(f"{fname}.out"):
+            raise QiskitNatureError(f"Missing file {fname}.out")
+        
+        # TODO: Support adding results from (UHF, ROHF) calculation into data
+        fcidump = FCIDump.from_file(f"{fname}.FciDmp")
+        data.hij = None     # TODO: transform MO integrals to AO integrals
+        data.hij_b = None
+        data.hij_mo = fcidump.hij
+        data.hij_mo_b = fcidump.hij_b
+        # if _has_B:
+        #     _q_h1b.transform(_q_hf_wavefn.Cb())
+        #     data.hij_mo_b = np.asarray(_q_h1b)
+
+        # # TODO: add support for symmetry-reduced integrals
+        # data.eri = np.asarray(_q_mints.ao_eri())
+        data.eri_mo = fcidump.hijkl
+        data.eri_mo_ba = None
+        data.eri_mo_bb = None
+        # if _has_B:
+        #     data.eri_mo_bb = np.asarray(_q_mints.mo_eri(_q_hf_wavefn.Cb(), _q_hf_wavefn.Cb(),
+        #                                                 _q_hf_wavefn.Cb(), _q_hf_wavefn.Cb()))
+        #     data.eri_mo_ba = np.asarray(_q_mints.mo_eri(_q_hf_wavefn.Cb(), _q_hf_wavefn.Cb(),
+        #                                                 _q_hf_wavefn.Ca(), _q_hf_wavefn.Ca()))
+
+        molden_data = parse_molden(f"{fname}.scf.molden")
+        data.overlap = None
+        data.mo_coeff = np.asarray([mo["coeffs"] for mo in molden_data["orbitals"]])
+        data.mo_coeff_b = None
+        data.mo_energy = np.asarray([mo["energy"] for mo in molden_data["orbitals"]])
+        data.mo_energy_b = None
+        data.mo_occ = np.asarray([mo["occup"] for mo in molden_data["orbitals"]])
+        data.mo_occ_b = None
+        data.symbols = []
+        data.coords  = np.empty([molden_data["natoms"], 3])
+        for _n, atom in enumerate(molden_data["atoms"]):
+            data.symbols.append(PERIODIC_TABLE[atom["atnum"]])
+            data.coords[_n][0] = atom['x']
+            data.coords[_n][1] = atom['y']
+            data.coords[_n][2] = atom['z']        
+        data.coords = data.coords.flatten()
+
+        logdata = parse_output(f"{fname}.out")
+        data.e_nuc = fcidump.constant_energy
+        data.e_ref = logdata["etotal"]
+        data.multiplicity = fcidump.multiplicity
+        data.charge = None      # TODO: add mass and charge information
+        data.masses = None     
+        data.method = None      # TODO: determine method from output
+        data.basis = logdata["basis"]
+        data.creator = "OpenMolcas"
+        data.version = logdata["version"]
+        data.routine = None
+        data.nbasis = None
+        data.nmo = data.mo_coeff.shape[0]
+        data.nalpha = (fcidump.num_electrons + data.multiplicity - 1) // 2
+        data.nbeta = (fcidump.num_electrons - data.multiplicity + 1) // 2
+        data.keywords = None
+
+        # TODO: add dipole moment information
+
+        return MolcasDriver._to_qcschema(data, include_dipole=include_dipole)
