@@ -154,7 +154,7 @@ class MolcasDriver(ElectronicStructureDriver):
         Raises:
             UnsupportMethodError: If the method is not supported.
         """
-        if method not in [MethodType.RHF, MethodType.ROHF, MethodType.UHF]:
+        if method not in [MethodType.RHF]:
             raise UnsupportMethodError(f"Invalid Molcas method {method.value}.")
 
     def run(self) -> ElectronicStructureProblem:
@@ -167,26 +167,31 @@ class MolcasDriver(ElectronicStructureDriver):
 
         logger.debug("User supplied configuration\n%s", cfg)
 
-        file_fd, input_file = tempfile.mkstemp(suffix=".inp")
+        run_directory = os.getcwd()
+        file_fd, input_file = tempfile.mkstemp(suffix=".inp", prefix="molcasf", dir=run_directory)
         os.close(file_fd)
         with open(input_file, "w", encoding="utf8") as stream:
             stream.write(cfg)
-
-        file_fd, output_file = tempfile.mkstemp(suffix=".out")
-        os.close(file_fd)       
-
         
+        output_file = input_file.replace(".inp", ".out") 
         MolcasDriver._run_pymolcas(input_file, output_file)
         if logger.isEnabledFor(logging.DEBUG):
             with open(output_file, "r", encoding="utf8") as file:
                 logger.debug("OpenMolcas output file:\n%s", file.read())
 
-        # return self.to_problem()
+        file_name = input_file.rpartition('.')[0]        
+        self._qcschemadata = MolcasDriver._parse_molcas_files(file_name)
+        try:
+            base_name = os.path.basename(output_file).rpartition('.')[0]
+            for local_file in os.listdir(run_directory):
+                if local_file.startswith(f"{base_name}"):
+                    os.remove(run_directory + "/" + local_file)
+                elif local_file.startswith("xmldump"):
+                    os.remove(local_file)
+        except Exception:  # pylint: disable=broad-except
+            logger.warning("Failed to remove OpenMolcas files starting with %s", base_name)
 
-    # @staticmethod
-    # def _augment_config(fname: str, cfg: str) -> str:
-    #     """Adds the extra config we need to the input file"""
-    #     pass
+        return self.to_problem()
 
     def to_qcschema(self, *, include_dipole: bool = False) -> QCSchema:
         return MolcasDriver._to_qcschema(self._qcschemadata, include_dipole=include_dipole)
@@ -232,7 +237,7 @@ class MolcasDriver(ElectronicStructureDriver):
             )
     
     @staticmethod
-    def _qcschema_from_files(fname: str, *, include_dipole: bool = False) -> QCSchema:
+    def _parse_molcas_files(fname: str, *, include_dipole: bool = False) -> QCSchema:
         from .utils import parse_molden, parse_output
         data = _QCSchemaData()
 
@@ -300,4 +305,4 @@ class MolcasDriver(ElectronicStructureDriver):
 
         # TODO: add dipole moment information
 
-        return MolcasDriver._to_qcschema(data, include_dipole=include_dipole)
+        return data
