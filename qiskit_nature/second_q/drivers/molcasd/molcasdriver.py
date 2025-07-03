@@ -42,7 +42,7 @@ from ..electronic_structure_driver import ElectronicStructureDriver, MethodType,
 logger = logging.getLogger(__name__)
 
 
-# @_optionals.HAS_MOLCAS.require_in_instance
+@_optionals.HAS_MOLCAS.require_in_instance
 class MolcasDriver(ElectronicStructureDriver):
     """
     Qiskit Nature driver using the OpenMolcas program.
@@ -73,7 +73,7 @@ class MolcasDriver(ElectronicStructureDriver):
         self._qcschemadata = _QCSchemaData()
 
     @staticmethod
-    # @_optionals.HAS_MOLCAS.require_in_call
+    @_optionals.HAS_MOLCAS.require_in_call
     def from_molecule(
         molecule: MoleculeInfo,
         *,
