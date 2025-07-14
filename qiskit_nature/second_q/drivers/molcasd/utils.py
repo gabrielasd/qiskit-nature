@@ -1,4 +1,66 @@
+# This code is part of a Qiskit project.
+#
+# (C) Copyright IBM 2020, 2023.
+#
+# This code is licensed under the Apache License, Version 2.0. You may
+# obtain a copy of this license in the LICENSE.txt file in the root directory
+# of this source tree or at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# Any modifications or derivative works of this code must retain this
+# copyright notice, and modified files need to carry a notice indicating
+# that they have been altered from the originals.
+
+""" OpenMolcas Utility Methods """
+
 import re
+
+from qiskit_nature.constants import PERIODIC_TABLE
+from ..electronic_structure_driver import MethodType
+
+
+def make_molcas_cofig(
+        geom: str | list[str],
+        charge: int,
+        basis: str,
+        nbasis: int,
+        method: str, 
+        units: str,
+        wfn_tol: float = 5e-2
+    ) -> str:
+    """Make a Molcas configuration string from the given parameters.
+
+    Args:
+        geom: The elements and coordinates of all atoms in the system.
+        charge: The charge of the molecule.
+        basis: A basis set name as recognized by OpenMolcas.
+        nbasis: The number of spatial orbitals. This parameter is required to generate and FCIDUMP file.
+        method: The SCF method type to be used for the OpenMolcas calculation. For now the MolcasDriver
+        only supports RHF and CASSCF methods.
+        units: Denotes the unit of coordinates. Valid values are "Angstrom" and "Bohr".
+        wfn_tol: This keyword is used to specify the threshold for printing the coefficients and Slater 
+        determinant expansion of a CASSCF wavefunction to a ``VecDet`` file.
+    """
+
+    if isinstance(geom, list):
+        geom = "\n".join(geom)
+
+    atoms = geom.split('\n')
+    natom = len(atoms)
+    nelec = sum([PERIODIC_TABLE.index(atom[0][0]) for atom in atoms])
+    nelec -= charge
+    
+    # OpenMolcas input instructions
+    cfg1 = "&GATEWAY\n"
+    cfg2 = f"coord\n{natom}\n{units}\n"
+    cfg2 += f"{geom}\nbasis={basis}\nGroup=Nosym\n"
+    cfg3 = f"&SEWARD\n&SCF\n"
+    cfg4 = f"&RASSCF\nSpin= 1; Nactel= {nelec} 0 0; Inactive= 0; Ras2= {nbasis}\n"
+    cfg4 += f"DMPO\n\n"
+
+    if method == "casscf":
+        cfg4 += f"&RASSCF\nprwf = {wfn_tol}\nPRSD\n\n"
+    
+    return cfg1 + cfg2 + cfg3 + cfg4
 
 
 def parse_molden(molden: str):
@@ -109,7 +171,7 @@ def parse_output(out: str):
             basis = line.split("=")[-1].strip()
         elif "Basis functions" in line:
             nbasis = int(line.split()[-1].strip())
-        elif line.startswith("::"):
+        elif line.startswith("::") and "Total SCF energy" in line:
             etotal = float(line.split()[-1].strip())
         
     return {

@@ -38,6 +38,7 @@ from qiskit_nature.second_q.problems import ElectronicBasis, ElectronicStructure
 from qiskit_nature.utils import get_einsum
 
 from ..electronic_structure_driver import ElectronicStructureDriver, MethodType, _QCSchemaData
+from .utils import parse_molden, parse_output, make_molcas_cofig
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class MolcasDriver(ElectronicStructureDriver):
         *,
         basis: str = "sto-3g",
         method: MethodType = MethodType.RHF,
+        nbasis: int = None,
         driver_kwargs: dict[str, Any] | None = None,
     ) -> "MolcasDriver":
         """Creates a driver from a molecule.
@@ -87,6 +89,7 @@ class MolcasDriver(ElectronicStructureDriver):
             molecule: the molecular information.
             basis: the basis set.
             method: the SCF method type.
+            nbasis: The number of spatial orbitals. This parameter is required to generate and FCIDUMP file.
             driver_kwargs: keyword arguments to be passed to driver.
 
         Returns:
@@ -95,40 +98,31 @@ class MolcasDriver(ElectronicStructureDriver):
         Raises:
             QiskitNatureError: when an unknown unit is encountered.
         """
-        # TODO: Figure out how to specify the number of orbitals in the basis set.
-        # This is needed for the RASSCF calculation that generates the FCIDUMP.
+        # Ignore kwargs parameter for this driver
+        del driver_kwargs
+        MolcasDriver.check_method_supported(method)
+        basis = MolcasDriver.to_driver_basis(basis)
 
-        # # Ignore kwargs parameter for this driver
-        # del driver_kwargs
-        # MolcasDriver.check_method_supported(method)
-        # basis = MolcasDriver.to_driver_basis(basis)
-
-        # if molecule.units == DistanceUnit.ANGSTROM:
-        #     units = "Angstrom"
-        # elif molecule.units == DistanceUnit.BOHR:
-        #     units = "Bohr"
-        # else:
-        #     raise QiskitNatureError(f"Unknown unit '{molecule.units.value}'")
+        if molecule.units == DistanceUnit.ANGSTROM:
+            units = "Angstrom"
+        elif molecule.units == DistanceUnit.BOHR:
+            units = "Bohr"
+        else:
+            raise QiskitNatureError(f"Unknown unit '{molecule.units.value}'")
         
-        # name = "".join(molecule.symbols)
-        # geom = "\n".join(
-        #     [
-        #         name + " " + " ".join(map(str, coord))
-        #         for (name, coord) in zip(molecule.symbols, molecule.coords)
-        #     ]
-        # )
-        # cfg1 = "&GATEWAY\n"
-        # cfg2 = f"coord\n{len(molecule.symbols)}\n{units}\n"
-        # cfg2 += f"{geom}\nbasis={basis}\nGroup=Nosym\n"
-        # cfg3 = f"&SEWARD\n&SCF\n\n"
+        if nbasis is None:
+            raise QiskitNatureError(f"Number of basis functions required for FCIDUMP generation, '{nbasis}' given")
+        
+        geom = "\n".join(
+            [
+                name + " " + " ".join(map(str, coord))
+                for (name, coord) in zip(molecule.symbols, molecule.coords)
+            ]
+        )
+        charge = molecule.charge
 
-        # nbasis = None
-        # nelec = sum([PERIODIC_TABLE.index(symbol) for symbol in molecule.symbols])
-        # nelec -= molecule.charge
-        # cfg4 = f"&RASSCF\nSpin= 1; Nactel= {nelec} 0 0; Inactive=0; Ras2={nbasis}\nDMPO\n\n"
-
-        # return MolcasDriver(cfg1 + cfg2 + cfg3)
-        raise NotImplementedError()
+        cfg = make_molcas_cofig(geom, charge, basis, nbasis, method, units)
+        return MolcasDriver(cfg)
 
     @staticmethod
     def to_driver_basis(basis: str) -> str:
@@ -238,7 +232,6 @@ class MolcasDriver(ElectronicStructureDriver):
     
     @staticmethod
     def _parse_molcas_files(fname: str, *, include_dipole: bool = False) -> QCSchema:
-        from .utils import parse_molden, parse_output
         data = _QCSchemaData()
 
         if not os.path.exists(f"{fname}.FciDmp"):
