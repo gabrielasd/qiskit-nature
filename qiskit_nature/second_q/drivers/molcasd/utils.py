@@ -46,7 +46,7 @@ def make_molcas_cofig(
 
     atoms = geom.split('\n')
     natom = len(atoms)
-    nelec = sum([PERIODIC_TABLE.index(atom[0][0]) for atom in atoms])
+    nelec = sum([PERIODIC_TABLE.index(atom.split()[0]) for atom in atoms])
     nelec -= charge
     
     # OpenMolcas input instructions
